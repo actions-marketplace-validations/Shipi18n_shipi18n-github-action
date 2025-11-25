@@ -3,6 +3,7 @@ const github = require('@actions/github');
 const exec = require('@actions/exec');
 const fs = require('fs').promises;
 const path = require('path');
+const fetch = require('node-fetch');
 
 /**
  * Call Shipi18n API to translate a JSON file
