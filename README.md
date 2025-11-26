@@ -1,6 +1,7 @@
 # Shipi18n GitHub Action
 
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Shipi18n-blue.svg?logo=github)](https://github.com/marketplace/actions/shipi18n-auto-translate)
+[![CI](https://github.com/Shipi18n/shipi18n-github-action/actions/workflows/ci.yml/badge.svg)](https://github.com/Shipi18n/shipi18n-github-action/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub last commit](https://img.shields.io/github/last-commit/Shipi18n/shipi18n-github-action)](https://github.com/Shipi18n/shipi18n-github-action)
 
