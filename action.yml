@@ -10,8 +10,13 @@ inputs:
     description: 'Shipi18n API key'
     required: true
   source-file:
-    description: 'Path to source locale file (e.g., locales/en.json)'
-    required: true
+    description: 'Path to source locale file (e.g., locales/en.json). Use this OR source-dir.'
+    required: false
+    default: ''
+  source-dir:
+    description: 'Path to source locale directory (e.g., locales/en). All JSON/YAML files will be translated. Use this OR source-file.'
+    required: false
+    default: ''
   target-languages:
     description: 'Comma-separated list of target language codes (e.g., es,fr,de)'
     required: true
@@ -39,6 +44,8 @@ inputs:
 outputs:
   files-changed:
     description: 'Number of translation files updated'
+  files-list:
+    description: 'JSON array of files that were translated'
   languages:
     description: 'List of languages translated'
 

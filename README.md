@@ -9,7 +9,8 @@ Automatically translate your i18n locale files in your CI/CD pipeline using [Shi
 
 ## Features
 
-- ✅ **Automatic Translation** - Translate JSON locale files on every push
+- ✅ **Automatic Translation** - Translate JSON/YAML locale files on every push
+- ✅ **Multi-File Support** - Translate entire directories at once with `source-dir`
 - ✅ **Multi-Language Support** - Translate to 100+ languages at once
 - ✅ **Placeholder Preservation** - Keeps `{{name}}`, `{count}`, `%s`, etc. intact
 - ✅ **i18next Compatible** - Auto-generates CLDR plural forms
@@ -98,13 +99,47 @@ That's it! Now whenever you update `locales/en.json`, translations are automatic
     output-dir: 'src/locales'
 ```
 
+### Multi-File Mode (Recommended)
+
+Translate an entire directory of locale files at once:
+
+```yaml
+- uses: Shipi18n/shipi18n-github-action@v1
+  with:
+    api-key: ${{ secrets.SHIPI18N_API_KEY }}
+    source-dir: 'locales/en'
+    target-languages: 'es,fr,de'
+```
+
+This will:
+1. Find all JSON/YAML files in `locales/en/`
+2. Translate each file to all target languages
+3. Output to `locales/es/`, `locales/fr/`, `locales/de/` (preserving filenames)
+
+**Example structure:**
+```
+locales/
+├── en/
+│   ├── common.json     # Source files (you edit these)
+│   └── home.json
+├── es/
+│   ├── common.json     # Auto-generated
+│   └── home.json
+├── fr/
+│   ├── common.json     # Auto-generated
+│   └── home.json
+└── de/
+    ├── common.json     # Auto-generated
+    └── home.json
+```
+
 ### Monorepo Setup
 
 ```yaml
 - uses: Shipi18n/shipi18n-github-action@v1
   with:
     api-key: ${{ secrets.SHIPI18N_API_KEY }}
-    source-file: 'apps/frontend/locales/en.json'
+    source-dir: 'apps/frontend/locales/en'
     target-languages: 'es,fr,de'
     output-dir: 'apps/frontend/locales'
 ```
@@ -114,19 +149,25 @@ That's it! Now whenever you update `locales/en.json`, translations are automatic
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
 | `api-key` | Shipi18n API key | ✅ Yes | - |
-| `source-file` | Path to source locale file | ✅ Yes | - |
+| `source-file` | Path to source locale file (use this OR `source-dir`) | No | - |
+| `source-dir` | Path to source locale directory (use this OR `source-file`) | No | - |
 | `target-languages` | Comma-separated language codes | ✅ Yes | - |
-| `output-dir` | Output directory for translations | No | Same as source file directory |
+| `output-dir` | Output directory for translations | No | Parent of source dir/file |
 | `source-language` | Source language code | No | `en` |
 | `create-pr` | Create PR instead of direct commit | No | `false` |
 | `commit-message` | Custom commit message | No | `chore: update translations [skip ci]` |
 | `branch-name` | Branch name for PR | No | `shipi18n-translations` |
+
+> **Note:** You must specify either `source-file` OR `source-dir`, not both.
+> - Use `source-file` for single file translation (outputs `{lang}.json`)
+> - Use `source-dir` for multi-file translation (outputs `{lang}/{filename}.json`)
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
 | `files-changed` | Number of translation files updated |
+| `files-list` | JSON array of files that were created/updated |
 | `languages` | List of languages translated |
 
 ## Supported Languages

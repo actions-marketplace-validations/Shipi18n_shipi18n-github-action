@@ -1,0 +1,25 @@
+name: Translate All Locale Files
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'locales/en/**'
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Translate locale files
+        uses: Shipi18n/shipi18n-github-action@v1
+        with:
+          api-key: ${{ secrets.SHIPI18N_API_KEY }}
+          source-dir: 'locales/en'
+          target-languages: 'es,fr,de,ja'
+          create-pr: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
