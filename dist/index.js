@@ -35946,6 +35946,201 @@ function extractKeys(obj, keys) {
   return unflattenObject(extracted);
 }
 
+// ============================================
+// VERIFICATION FUNCTIONS
+// ============================================
+
+/**
+ * Extract placeholders from a string
+ * Supports: {{name}}, {name}, %s, %d, %@, {0}, {1}, etc.
+ */
+function extractPlaceholders(str) {
+  if (typeof str !== 'string') return [];
+
+  const patterns = [
+    /\{\{[^}]+\}\}/g,      // {{name}} - i18next/Handlebars
+    /\{[^}]+\}/g,          // {name} - ICU/general
+    /%[sd@]/g,             // %s, %d, %@ - printf style
+    /%\d+\$[sd]/g,         // %1$s - positional printf
+  ];
+
+  const placeholders = new Set();
+  for (const pattern of patterns) {
+    const matches = str.match(pattern) || [];
+    matches.forEach(m => placeholders.add(m));
+  }
+
+  return Array.from(placeholders).sort();
+}
+
+/**
+ * Verify placeholders survived translation
+ */
+function verifyPlaceholders(sourceValue, translatedValue, key) {
+  const sourcePlaceholders = extractPlaceholders(sourceValue);
+  const translatedPlaceholders = extractPlaceholders(translatedValue);
+
+  const missing = sourcePlaceholders.filter(p => !translatedPlaceholders.includes(p));
+  const extra = translatedPlaceholders.filter(p => !sourcePlaceholders.includes(p));
+
+  if (missing.length > 0 || extra.length > 0) {
+    return {
+      key,
+      type: 'placeholder',
+      severity: 'error',
+      message: missing.length > 0
+        ? `Missing placeholders: ${missing.join(', ')}`
+        : `Unexpected placeholders: ${extra.join(', ')}`,
+      source: sourceValue,
+      translated: translatedValue
+    };
+  }
+  return null;
+}
+
+/**
+ * Verify key consistency between source and translation
+ */
+function verifyKeyConsistency(sourceKeys, translatedKeys, lang) {
+  const issues = [];
+
+  const missing = sourceKeys.filter(k => !translatedKeys.includes(k));
+  const extra = translatedKeys.filter(k => !sourceKeys.includes(k));
+
+  if (missing.length > 0) {
+    issues.push({
+      type: 'missing_keys',
+      severity: 'error',
+      message: `${missing.length} key(s) missing in ${lang}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '...' : ''}`,
+      keys: missing
+    });
+  }
+
+  if (extra.length > 0) {
+    issues.push({
+      type: 'extra_keys',
+      severity: 'warning',
+      message: `${extra.length} unexpected key(s) in ${lang}: ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? '...' : ''}`,
+      keys: extra
+    });
+  }
+
+  return issues;
+}
+
+/**
+ * Verify translation length is reasonable
+ * Flag if translation is >5x or <0.2x the source length
+ */
+function verifyLengthSanity(sourceValue, translatedValue, key) {
+  if (typeof sourceValue !== 'string' || typeof translatedValue !== 'string') return null;
+  if (sourceValue.length < 5) return null; // Skip very short strings
+
+  const ratio = translatedValue.length / sourceValue.length;
+
+  if (ratio > 5) {
+    return {
+      key,
+      type: 'length',
+      severity: 'warning',
+      message: `Translation is ${ratio.toFixed(1)}x longer than source`,
+      source: sourceValue,
+      translated: translatedValue
+    };
+  }
+
+  if (ratio < 0.2) {
+    return {
+      key,
+      type: 'length',
+      severity: 'warning',
+      message: `Translation is ${ratio.toFixed(1)}x shorter than source`,
+      source: sourceValue,
+      translated: translatedValue
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Run all verification checks on a translation
+ */
+function runVerification(sourceContent, translatedContent, lang) {
+  const issues = [];
+
+  const sourceFlat = flattenObject(sourceContent);
+  const translatedFlat = flattenObject(translatedContent);
+
+  const sourceKeys = Object.keys(sourceFlat);
+  const translatedKeys = Object.keys(translatedFlat);
+
+  // Key consistency check
+  const keyIssues = verifyKeyConsistency(sourceKeys, translatedKeys, lang);
+  issues.push(...keyIssues);
+
+  // Per-key checks
+  for (const key of sourceKeys) {
+    const sourceValue = sourceFlat[key];
+    const translatedValue = translatedFlat[key];
+
+    if (translatedValue === undefined) continue;
+
+    // Placeholder check
+    const placeholderIssue = verifyPlaceholders(sourceValue, translatedValue, key);
+    if (placeholderIssue) {
+      placeholderIssue.lang = lang;
+      issues.push(placeholderIssue);
+    }
+
+    // Length sanity check
+    const lengthIssue = verifyLengthSanity(sourceValue, translatedValue, key);
+    if (lengthIssue) {
+      lengthIssue.lang = lang;
+      issues.push(lengthIssue);
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Format verification results for PR description
+ */
+function formatVerificationSummary(allIssues) {
+  if (allIssues.length === 0) {
+    return '### ✅ Verification Passed\nAll translations passed quality checks.';
+  }
+
+  const errors = allIssues.filter(i => i.severity === 'error');
+  const warnings = allIssues.filter(i => i.severity === 'warning');
+
+  let summary = '### ⚠️ Verification Results\n\n';
+
+  if (errors.length > 0) {
+    summary += `**${errors.length} Error(s):**\n`;
+    errors.slice(0, 10).forEach(e => {
+      summary += `- ❌ \`${e.key || e.type}\`: ${e.message}\n`;
+    });
+    if (errors.length > 10) {
+      summary += `- ... and ${errors.length - 10} more errors\n`;
+    }
+    summary += '\n';
+  }
+
+  if (warnings.length > 0) {
+    summary += `**${warnings.length} Warning(s):**\n`;
+    warnings.slice(0, 5).forEach(w => {
+      summary += `- ⚠️ \`${w.key || w.type}\`: ${w.message}\n`;
+    });
+    if (warnings.length > 5) {
+      summary += `- ... and ${warnings.length - 5} more warnings\n`;
+    }
+  }
+
+  return summary;
+}
+
 /**
  * Discover all translatable files in a directory
  */
@@ -36242,7 +36437,7 @@ async function commitChanges(filesChanged, commitMessage) {
 /**
  * Create a pull request
  */
-async function createPullRequest(filesChanged, branchName, commitMessage, token, sourceFiles) {
+async function createPullRequest(filesChanged, branchName, commitMessage, token, sourceFiles, verificationSummary = '') {
   // Add timestamp to branch name to avoid conflicts
   const timestamp = Date.now();
   const uniqueBranchName = `${branchName}-${timestamp}`;
@@ -36301,8 +36496,7 @@ ${sourceFiles.map(f => `- \`${f}\``).join('\n')}
 
 ${filesSection}
 
-### ✅ Ready to merge
-All translations have been generated and are ready for review.
+${verificationSummary}
 
 ---
 *Generated with [Shipi18n](https://shipi18n.com)*
@@ -36368,10 +36562,23 @@ async function run() {
     const allFilesChanged = [];
     let totalKeysTranslated = 0;
     let totalKeysDeleted = 0;
+    const allVerificationIssues = [];
+    const sourceContents = {}; // Store source content for verification
 
     for (const file of sourceFiles) {
       core.info(`\n${'─'.repeat(50)}`);
       core.info(`📄 Processing: ${path.basename(file)}`);
+
+      // Read and store source content for verification
+      const sourceContent = await fs.readFile(file, 'utf8');
+      const ext = path.extname(file).toLowerCase();
+      if (ext === '.json') {
+        try {
+          sourceContents[file] = JSON.parse(sourceContent);
+        } catch (e) {
+          core.warning(`Could not parse source file for verification: ${file}`);
+        }
+      }
 
       // Translate the file
       const result = await translateFile(apiKey, file, targetLanguages, sourceLanguage, incremental);
@@ -36418,10 +36625,60 @@ async function run() {
     core.info(`✅ Processed ${sourceFiles.length} file(s) to ${targetLanguages.length} language(s)`);
     core.info(`📝 Total files created/updated: ${allFilesChanged.length}`);
 
+    // Run verification on translated files
+    if (allFilesChanged.length > 0) {
+      core.info(`\n🔍 Running verification checks...`);
+
+      for (const translatedFile of allFilesChanged) {
+        try {
+          // Read translated file
+          const translatedContent = await fs.readFile(translatedFile, 'utf8');
+          const ext = path.extname(translatedFile).toLowerCase();
+
+          if (ext === '.json') {
+            const translatedParsed = JSON.parse(translatedContent);
+
+            // Find corresponding source file
+            const filename = path.basename(translatedFile);
+            const sourceFile = Object.keys(sourceContents).find(f => path.basename(f) === filename);
+
+            if (sourceFile && sourceContents[sourceFile]) {
+              // Extract language from path (e.g., locales/es/common.json -> es)
+              const pathParts = translatedFile.split(path.sep);
+              const langMatch = pathParts.find(p => /^[a-z]{2}(-[A-Z]{2})?$/.test(p));
+              const lang = langMatch || 'unknown';
+
+              // Run verification
+              const issues = runVerification(sourceContents[sourceFile], translatedParsed, lang);
+              allVerificationIssues.push(...issues);
+            }
+          }
+        } catch (e) {
+          core.warning(`Could not verify ${translatedFile}: ${e.message}`);
+        }
+      }
+
+      // Log verification results
+      const errors = allVerificationIssues.filter(i => i.severity === 'error');
+      const warnings = allVerificationIssues.filter(i => i.severity === 'warning');
+
+      if (allVerificationIssues.length === 0) {
+        core.info(`✅ All verification checks passed`);
+      } else {
+        core.info(`⚠️ Verification found ${errors.length} error(s) and ${warnings.length} warning(s)`);
+        errors.slice(0, 5).forEach(e => core.warning(`${e.key || e.type}: ${e.message}`));
+      }
+    }
+
+    // Generate verification summary for PR
+    const verificationSummary = formatVerificationSummary(allVerificationIssues);
+
     // Set outputs
     core.setOutput('files-changed', allFilesChanged.length);
     core.setOutput('files-list', JSON.stringify(allFilesChanged));
     core.setOutput('languages', targetLanguages.join(','));
+    core.setOutput('verification-errors', allVerificationIssues.filter(i => i.severity === 'error').length);
+    core.setOutput('verification-warnings', allVerificationIssues.filter(i => i.severity === 'warning').length);
 
     // Commit or create PR
     if (allFilesChanged.length > 0) {
@@ -36430,7 +36687,7 @@ async function run() {
         if (!token) {
           throw new Error('github-token is required when create-pr is true');
         }
-        await createPullRequest(allFilesChanged, branchName, commitMessage, token, sourceFiles);
+        await createPullRequest(allFilesChanged, branchName, commitMessage, token, sourceFiles, verificationSummary);
       } else {
         const committed = await commitChanges(allFilesChanged, commitMessage);
         if (!committed) {

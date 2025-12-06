@@ -56,6 +56,10 @@ outputs:
     description: 'JSON array of files that were translated'
   languages:
     description: 'List of languages translated'
+  verification-errors:
+    description: 'Number of verification errors found (missing placeholders, missing keys)'
+  verification-warnings:
+    description: 'Number of verification warnings found (unusual length ratios)'
 
 runs:
   using: 'node20'
