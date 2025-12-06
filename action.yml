@@ -40,6 +40,10 @@ inputs:
     description: 'Branch name for PR (only used if create-pr is true)'
     required: false
     default: 'shipi18n-translations'
+  github-token:
+    description: 'GitHub token for creating PRs (defaults to GITHUB_TOKEN)'
+    required: false
+    default: ''
 
 outputs:
   files-changed:
