@@ -10,6 +10,7 @@ Automatically translate your i18n locale files in your CI/CD pipeline using [Shi
 ## Features
 
 - ✅ **Automatic Translation** - Translate JSON/YAML locale files on every push
+- ✅ **Incremental Mode** - Only translate changed keys (saves cost & time)
 - ✅ **Multi-File Support** - Translate entire directories at once with `source-dir`
 - ✅ **Multi-Language Support** - Translate to 100+ languages at once
 - ✅ **Placeholder Preservation** - Keeps `{{name}}`, `{count}`, `%s`, etc. intact
@@ -53,6 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Required for incremental translation
 
       - uses: Shipi18n/shipi18n-github-action@v1
         with:
@@ -61,7 +64,7 @@ jobs:
           target-languages: 'es,fr,de,ja'
 ```
 
-That's it! Now whenever you update `locales/en.json`, translations are automatically generated.
+That's it! Now whenever you update `locales/en.json`, only the changed keys are translated (incremental mode).
 
 ## Usage
 
@@ -155,8 +158,10 @@ locales/
 | `output-dir` | Output directory for translations | No | Parent of source dir/file |
 | `source-language` | Source language code | No | `en` |
 | `create-pr` | Create PR instead of direct commit | No | `false` |
+| `incremental` | Only translate changed keys (requires `fetch-depth: 2`) | No | `true` |
 | `commit-message` | Custom commit message | No | `chore: update translations [skip ci]` |
 | `branch-name` | Branch name for PR | No | `shipi18n-translations` |
+| `github-token` | GitHub token for creating PRs | No | `GITHUB_TOKEN` |
 
 > **Note:** You must specify either `source-file` OR `source-dir`, not both.
 > - Use `source-file` for single file translation (outputs `{lang}.json`)
