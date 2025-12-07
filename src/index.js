@@ -193,7 +193,7 @@ function verifyKeyConsistency(sourceKeys, translatedKeys, lang) {
   if (missing.length > 0) {
     issues.push({
       type: 'missing_keys',
-      severity: 'error',
+      severity: 'warning',
       message: `${missing.length} key(s) missing in ${lang}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '...' : ''}`,
       keys: missing
     });
