@@ -10,6 +10,7 @@ Automatically translate your i18n locale files in your CI/CD pipeline using [Shi
 ## Features
 
 - ✅ **Automatic Translation** - Translate JSON/YAML locale files on every push
+- ✅ **Incremental Mode** - Only translate changed keys (saves cost & time)
 - ✅ **Multi-File Support** - Translate entire directories at once with `source-dir`
 - ✅ **Multi-Language Support** - Translate to 100+ languages at once
 - ✅ **Placeholder Preservation** - Keeps `{{name}}`, `{count}`, `%s`, etc. intact
@@ -17,6 +18,48 @@ Automatically translate your i18n locale files in your CI/CD pipeline using [Shi
 - ✅ **Pull Request Mode** - Create PRs for review instead of direct commits
 - ✅ **Smart Commits** - Commits only when translations change
 - ✅ **Zero Configuration** - Works out of the box with sensible defaults
+
+## Adding Shipi18n to Your Repository
+
+Have an existing project with only English locale files? Shipi18n **automatically creates all language folders** for you.
+
+### Before & After
+
+```
+# BEFORE: You only have English
+locales/
+└── en/
+    ├── common.json
+    └── home.json
+
+# AFTER: Shipi18n creates all target languages
+locales/
+├── en/           ← Your source (you edit this)
+│   ├── common.json
+│   └── home.json
+├── es/           ← Auto-created & translated
+│   ├── common.json
+│   └── home.json
+├── fr/           ← Auto-created & translated
+│   ├── common.json
+│   └── home.json
+├── de/           ← Auto-created & translated
+│   ├── common.json
+│   └── home.json
+└── ja/           ← Auto-created & translated
+    ├── common.json
+    └── home.json
+```
+
+### 3 Steps to Add Translations
+
+**1. Get API Key** → Sign up at [shipi18n.com](https://shipi18n.com) (free, 30 seconds)
+
+**2. Add Secret** → Repository Settings → Secrets → Actions → `SHIPI18N_API_KEY`
+
+**3. Add Workflow** → Create `.github/workflows/translate.yml` (see Quick Start below)
+
+That's it! Push a change to your English files and translations appear automatically via Pull Request.
 
 ## Quick Start
 
@@ -40,6 +83,43 @@ Go to your repository settings → Secrets and variables → Actions → New rep
 
 Create `.github/workflows/translate.yml`:
 
+#### Option A: Multiple files in a folder (recommended)
+
+Use this if you have `locales/en/common.json`, `locales/en/home.json`, etc:
+
+```yaml
+name: Auto Translate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'locales/en/**'  # Watches all files in en folder
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Required for incremental translation
+
+      - uses: Shipi18n/shipi18n-github-action@v1
+        with:
+          api-key: ${{ secrets.SHIPI18N_API_KEY }}
+          source-dir: 'locales/en'        # Folder containing your English files
+          target-languages: 'es,fr,de,ja'
+          create-pr: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+#### Option B: Single file
+
+Use this if you have one file like `locales/en.json`:
+
 ```yaml
 name: Auto Translate
 on:
@@ -51,17 +131,43 @@ on:
 jobs:
   translate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: Shipi18n/shipi18n-github-action@v1
         with:
           api-key: ${{ secrets.SHIPI18N_API_KEY }}
-          source-file: 'locales/en.json'
+          source-file: 'locales/en.json'  # Single file
           target-languages: 'es,fr,de,ja'
+          create-pr: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-That's it! Now whenever you update `locales/en.json`, translations are automatically generated.
+### 4. Enable GitHub Actions (for forks)
+
+If you forked a repository with this workflow:
+
+1. Go to your repository's **Actions** tab
+2. Click **"I understand my workflows, go ahead and enable them"**
+3. GitHub disables workflows on forks by default for security
+
+### 5. Merge Translations
+
+When you push changes to your source locale file:
+
+1. The workflow runs automatically
+2. A **Pull Request** is created with the translations
+3. Review the PR and **merge it** to apply translations to your main branch
+
+> **Tip:** Use `create-pr: 'false'` to commit translations directly without a PR (not recommended for teams).
+
+That's it! Now whenever you update `locales/en.json`, only the changed keys are translated (incremental mode).
 
 ## Usage
 
@@ -155,8 +261,10 @@ locales/
 | `output-dir` | Output directory for translations | No | Parent of source dir/file |
 | `source-language` | Source language code | No | `en` |
 | `create-pr` | Create PR instead of direct commit | No | `false` |
+| `incremental` | Only translate changed keys (requires `fetch-depth: 2`) | No | `true` |
 | `commit-message` | Custom commit message | No | `chore: update translations [skip ci]` |
 | `branch-name` | Branch name for PR | No | `shipi18n-translations` |
+| `github-token` | GitHub token for creating PRs | No | `GITHUB_TOKEN` |
 
 > **Note:** You must specify either `source-file` OR `source-dir`, not both.
 > - Use `source-file` for single file translation (outputs `{lang}.json`)
@@ -417,6 +525,37 @@ source-file: 'src/locales/en.json'
 
 # ❌ Incorrect
 source-file: './src/locales/en.json'
+```
+
+### Workflow not running on forked repository
+
+GitHub disables workflows on forks by default for security. To enable:
+
+1. Go to your fork's **Actions** tab
+2. You'll see a banner: "Workflows aren't being run on this fork"
+3. Click **"I understand my workflows, go ahead and enable them"**
+
+### Translations not appearing in my files
+
+If using `create-pr: 'true'` (recommended), translations are in a **Pull Request**, not directly in main:
+
+1. Go to your repository's **Pull Requests** tab
+2. Find the PR titled "🌍 Update translations"
+3. Review and **merge** the PR to apply translations
+
+To commit directly without PR (not recommended for teams):
+```yaml
+create-pr: 'false'
+```
+
+### Incremental mode shows "No previous version found"
+
+Add `fetch-depth: 2` to your checkout step:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 2  # Required for incremental translation
 ```
 
 ## Documentation & Resources
