@@ -36175,7 +36175,7 @@ async function discoverFiles(sourceDir) {
  */
 async function reportSyncStatus(apiKey, data) {
   try {
-    const response = await fetch('https://x9527l3blg.execute-api.us-east-1.amazonaws.com/api/sync/status', {
+    const response = await fetch('https://ydjkwckq3f.execute-api.us-east-1.amazonaws.com/api/sync/status', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -36202,7 +36202,7 @@ async function reportSyncStatus(apiKey, data) {
  */
 async function reportSyncHistory(apiKey, data) {
   try {
-    const response = await fetch('https://x9527l3blg.execute-api.us-east-1.amazonaws.com/api/sync/history', {
+    const response = await fetch('https://ydjkwckq3f.execute-api.us-east-1.amazonaws.com/api/sync/history', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -36228,7 +36228,7 @@ async function reportSyncHistory(apiKey, data) {
  * Call Shipi18n API to translate content
  */
 async function callTranslateAPI(apiKey, content, targetLanguages, sourceLanguage, outputFormat) {
-  const response = await fetch('https://x9527l3blg.execute-api.us-east-1.amazonaws.com/api/translate', {
+  const response = await fetch('https://ydjkwckq3f.execute-api.us-east-1.amazonaws.com/api/translate', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
