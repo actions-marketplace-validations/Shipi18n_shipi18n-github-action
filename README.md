@@ -17,6 +17,9 @@ Automatically translate your i18n locale files in your CI/CD pipeline using [Shi
 - ✅ **i18next Compatible** - Auto-generates CLDR plural forms
 - ✅ **Pull Request Mode** - Create PRs for review instead of direct commits
 - ✅ **Smart Commits** - Commits only when translations change
+- ✅ **Skip Keys** - Keep brand names, state codes, or config values untranslated
+- ✅ **LLM Verification** - AI-powered quality checks with Claude Haiku
+- ✅ **Self-Correcting** - Auto-retry and fix failed translations
 - ✅ **Zero Configuration** - Works out of the box with sensible defaults
 
 ## Adding Shipi18n to Your Repository
@@ -265,6 +268,12 @@ locales/
 | `commit-message` | Custom commit message | No | `chore: update translations [skip ci]` |
 | `branch-name` | Branch name for PR | No | `shipi18n-translations` |
 | `github-token` | GitHub token for creating PRs | No | `GITHUB_TOKEN` |
+| `skip-keys` | Keys to skip from translation (comma-separated exact paths) | No | - |
+| `skip-paths` | Path patterns to skip (comma-separated, supports `*` and `**` wildcards) | No | - |
+| `verify` | Enable LLM-based translation verification | No | `false` |
+| `verify-mode` | Verification mode: `quick` (10% sample) or `thorough` (100%) | No | `quick` |
+| `self-correct` | Enable self-correcting translations (auto-retry with LLM feedback) | No | `false` |
+| `max-retries` | Maximum retry attempts for self-correcting mode | No | `2` |
 
 > **Note:** You must specify either `source-file` OR `source-dir`, not both.
 > - Use `source-file` for single file translation (outputs `{lang}.json`)
@@ -277,6 +286,14 @@ locales/
 | `files-changed` | Number of translation files updated |
 | `files-list` | JSON array of files that were created/updated |
 | `languages` | List of languages translated |
+| `skipped-keys-count` | Number of keys skipped from translation |
+| `verification-errors` | Number of verification errors found |
+| `verification-warnings` | Number of verification warnings found |
+| `llm-verification-pass` | Whether LLM verification passed (`true`/`false`/`skipped`) |
+| `llm-verification-cost` | Total cost of LLM verification in USD |
+| `self-correct-corrected` | Number of translations auto-corrected |
+| `self-correct-needs-review` | Number of translations flagged for human review |
+| `self-correct-cost` | Total cost of self-correcting in USD |
 
 ## Supported Languages
 
@@ -442,6 +459,58 @@ jobs:
           source-file: 'apps/${{ matrix.app }}/locales/en.json'
           target-languages: 'es,fr,de'
           output-dir: 'apps/${{ matrix.app }}/locales'
+```
+
+### Skip Keys from Translation
+
+Keep brand names, US state codes, or config values untranslated:
+
+```yaml
+- uses: Shipi18n/shipi18n-github-action@v1
+  with:
+    api-key: ${{ secrets.SHIPI18N_API_KEY }}
+    source-file: 'locales/en.json'
+    target-languages: 'es,fr,de'
+    # Skip exact key paths (brand names, legal terms)
+    skip-keys: 'brandName,company.name,legal.copyright'
+    # Skip using glob patterns (all US states, config secrets)
+    skip-paths: 'states.*,config.*.secret'
+```
+
+**Pattern Matching:**
+| Pattern | Matches |
+|---------|---------|
+| `states.CA` | Exact path only |
+| `states.*` | `states.CA`, `states.NY` (single level) |
+| `config.*.secret` | `config.api.secret`, `config.db.secret` |
+| `**.internal` | Any path ending with `.internal` |
+
+### With LLM Verification
+
+Enable AI-powered quality checks using Claude Haiku:
+
+```yaml
+- uses: Shipi18n/shipi18n-github-action@v1
+  with:
+    api-key: ${{ secrets.SHIPI18N_API_KEY }}
+    source-file: 'locales/en.json'
+    target-languages: 'es,fr,de'
+    verify: 'true'           # Enable LLM verification
+    verify-mode: 'thorough'  # Check 100% of translations (vs 'quick' = 10%)
+```
+
+### With Self-Correcting Translations
+
+Automatically retry and fix translations that fail quality checks:
+
+```yaml
+- uses: Shipi18n/shipi18n-github-action@v1
+  with:
+    api-key: ${{ secrets.SHIPI18N_API_KEY }}
+    source-file: 'locales/en.json'
+    target-languages: 'es,fr,de'
+    self-correct: 'true'  # Enable self-correcting mode
+    max-retries: '3'      # Max retry attempts (default: 2)
 ```
 
 ## How It Works

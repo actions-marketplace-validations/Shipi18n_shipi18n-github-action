@@ -48,6 +48,30 @@ inputs:
     description: 'GitHub token for creating PRs (defaults to GITHUB_TOKEN)'
     required: false
     default: ''
+  verify:
+    description: 'Enable LLM-based translation verification (true/false). Uses Claude Haiku 4.5 to check meaning, placeholders, and quality.'
+    required: false
+    default: 'false'
+  verify-mode:
+    description: 'Verification mode: "quick" (10% sample, fast) or "thorough" (100%, comprehensive)'
+    required: false
+    default: 'quick'
+  self-correct:
+    description: 'Enable self-correcting translations (true/false). Automatically retries failed translations with LLM feedback.'
+    required: false
+    default: 'false'
+  max-retries:
+    description: 'Maximum retry attempts for self-correcting mode (default: 2, max: 5)'
+    required: false
+    default: '2'
+  skip-keys:
+    description: 'Comma-separated keys to skip from translation (exact paths, e.g., brandName,company.name)'
+    required: false
+    default: ''
+  skip-paths:
+    description: 'Comma-separated glob patterns to skip (e.g., states.*,config.*.secret)'
+    required: false
+    default: ''
 
 outputs:
   files-changed:
@@ -60,6 +84,22 @@ outputs:
     description: 'Number of verification errors found (missing placeholders, missing keys)'
   verification-warnings:
     description: 'Number of verification warnings found (unusual length ratios)'
+  llm-verification-pass:
+    description: 'Whether LLM verification passed (true/false/skipped)'
+  llm-verification-issues:
+    description: 'JSON array of LLM verification issues found'
+  llm-verification-cost:
+    description: 'Total cost of LLM verification in USD (e.g., "0.000123")'
+  llm-verification-tokens:
+    description: 'Total tokens used for LLM verification (input + output)'
+  self-correct-corrected:
+    description: 'Number of translations that were auto-corrected'
+  self-correct-needs-review:
+    description: 'Number of translations flagged for human review'
+  self-correct-cost:
+    description: 'Total cost of self-correcting in USD'
+  skipped-keys-count:
+    description: 'Number of keys skipped from translation'
 
 runs:
   using: 'node20'
