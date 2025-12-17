@@ -290,35 +290,54 @@ function runVerification(sourceContent, translatedContent, lang) {
 /**
  * Format verification results for PR description
  */
-function formatVerificationSummary(allIssues) {
+function formatVerificationSummary(allIssues, llmCost = null, selfCorrectInfo = null) {
+  let summary = '';
+
   if (allIssues.length === 0) {
-    return '### ✅ Verification Passed\nAll translations passed quality checks.';
+    summary = '### ✅ Verification Passed\nAll translations passed quality checks.';
+  } else {
+    const errors = allIssues.filter(i => i.severity === 'error');
+    const warnings = allIssues.filter(i => i.severity === 'warning');
+
+    summary = '### ⚠️ Verification Results\n\n';
+
+    if (errors.length > 0) {
+      summary += `**${errors.length} Error(s):**\n`;
+      errors.slice(0, 10).forEach(e => {
+        summary += `- ❌ \`${e.key || e.type}\`: ${e.message}\n`;
+      });
+      if (errors.length > 10) {
+        summary += `- ... and ${errors.length - 10} more errors\n`;
+      }
+      summary += '\n';
+    }
+
+    if (warnings.length > 0) {
+      summary += `**${warnings.length} Warning(s):**\n`;
+      warnings.slice(0, 5).forEach(w => {
+        summary += `- ⚠️ \`${w.key || w.type}\`: ${w.message}\n`;
+      });
+      if (warnings.length > 5) {
+        summary += `- ... and ${warnings.length - 5} more warnings\n`;
+      }
+    }
   }
 
-  const errors = allIssues.filter(i => i.severity === 'error');
-  const warnings = allIssues.filter(i => i.severity === 'warning');
-
-  let summary = '### ⚠️ Verification Results\n\n';
-
-  if (errors.length > 0) {
-    summary += `**${errors.length} Error(s):**\n`;
-    errors.slice(0, 10).forEach(e => {
-      summary += `- ❌ \`${e.key || e.type}\`: ${e.message}\n`;
-    });
-    if (errors.length > 10) {
-      summary += `- ... and ${errors.length - 10} more errors\n`;
+  // Add self-correction info if available
+  if (selfCorrectInfo && selfCorrectInfo.enabled) {
+    summary += `\n### 🔄 Self-Correction Results\n`;
+    summary += `- Translations auto-corrected: ${selfCorrectInfo.corrected}\n`;
+    if (selfCorrectInfo.needsReview > 0) {
+      summary += `- ⚠️ **Needs human review: ${selfCorrectInfo.needsReview}**\n`;
     }
-    summary += '\n';
+    summary += `- Cost: $${selfCorrectInfo.cost.toFixed(6)}\n`;
   }
 
-  if (warnings.length > 0) {
-    summary += `**${warnings.length} Warning(s):**\n`;
-    warnings.slice(0, 5).forEach(w => {
-      summary += `- ⚠️ \`${w.key || w.type}\`: ${w.message}\n`;
-    });
-    if (warnings.length > 5) {
-      summary += `- ... and ${warnings.length - 5} more warnings\n`;
-    }
+  // Add LLM verification cost info if available
+  if (llmCost && llmCost.totalTokens > 0) {
+    summary += `\n### 💰 LLM Verification Cost\n`;
+    summary += `- Tokens used: ${llmCost.totalTokens.toLocaleString()}\n`;
+    summary += `- Cost: $${llmCost.totalCost.toFixed(6)}\n`;
   }
 
   return summary;
@@ -351,6 +370,68 @@ async function discoverFiles(sourceDir) {
   }
 
   return files;
+}
+
+/**
+ * Call LLM-based verification API
+ * Uses Claude Haiku 4.5 for semantic verification
+ */
+async function callLLMVerification(apiKey, sourceContent, translations, sourceLang, targetLang, mode = 'quick') {
+  try {
+    const sourceFlat = flattenObject(sourceContent);
+    const translatedFlat = flattenObject(translations);
+
+    // Build translation pairs
+    const pairs = [];
+    for (const [key, value] of Object.entries(sourceFlat)) {
+      if (typeof value === 'string' && translatedFlat[key]) {
+        pairs.push({
+          key,
+          sourceText: value,
+          translatedText: translatedFlat[key]
+        });
+      }
+    }
+
+    if (pairs.length === 0) {
+      return { pass: true, issues: [], message: 'No translations to verify' };
+    }
+
+    core.info(`🔬 Running LLM verification (${mode} mode) on ${pairs.length} translation(s) for ${targetLang}...`);
+
+    const response = await fetch('https://ydjkwckq3f.execute-api.us-east-1.amazonaws.com/api/verify/batch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        translations: pairs,
+        sourceLang,
+        targetLang,
+        options: { mode }
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }));
+      core.warning(`LLM verification API error: ${error.error || error.message || response.statusText}`);
+      return { pass: true, issues: [], error: error.error || response.statusText };
+    }
+
+    const result = await response.json();
+
+    if (result.pass) {
+      core.info(`✅ LLM verification passed for ${targetLang} (${result.passCount}/${result.totalVerified} checked)`);
+    } else {
+      core.warning(`⚠️ LLM verification found ${result.failCount} issue(s) in ${targetLang}`);
+    }
+
+    return result;
+  } catch (error) {
+    core.warning(`LLM verification failed: ${error.message}`);
+    return { pass: true, issues: [], error: error.message };
+  }
 }
 
 /**
@@ -410,7 +491,7 @@ async function reportSyncHistory(apiKey, data) {
 /**
  * Call Shipi18n API to translate content
  */
-async function callTranslateAPI(apiKey, content, targetLanguages, sourceLanguage, outputFormat) {
+async function callTranslateAPI(apiKey, content, targetLanguages, sourceLanguage, outputFormat, skipKeys = [], skipPaths = []) {
   const response = await fetch('https://ydjkwckq3f.execute-api.us-east-1.amazonaws.com/api/translate', {
     method: 'POST',
     headers: {
@@ -425,6 +506,8 @@ async function callTranslateAPI(apiKey, content, targetLanguages, sourceLanguage
       outputFormat,
       preservePlaceholders: true,
       saveKeys: true,  // Store keys in translation memory (counts toward user's key limit)
+      skipKeys,
+      skipPaths,
     }),
   });
 
@@ -435,21 +518,52 @@ async function callTranslateAPI(apiKey, content, targetLanguages, sourceLanguage
 
   const result = await response.json();
 
+  // Extract skipped info if present
+  const skippedInfo = result.skipped || { count: 0, keys: [] };
+
   // Filter out non-translation fields (warnings, savedKeys, etc.)
   const translations = {};
   for (const [key, value] of Object.entries(result)) {
-    if (!['warnings', 'savedKeys', 'keysSavedCount', 'namespaces', 'namespaceFiles', 'namespaceFileNames'].includes(key)) {
+    if (!['warnings', 'savedKeys', 'keysSavedCount', 'namespaces', 'namespaceFiles', 'namespaceFileNames', 'skipped'].includes(key)) {
       translations[key] = value;
     }
   }
 
-  return translations;
+  return { translations, skippedInfo };
+}
+
+/**
+ * Call Shipi18n Self-Correcting API to translate content with automatic retry
+ * Uses LLM to fix translation issues and retry up to maxRetries times
+ */
+async function callSelfCorrectingAPI(apiKey, content, targetLanguage, sourceLanguage, maxRetries = 2) {
+  const response = await fetch('https://ydjkwckq3f.execute-api.us-east-1.amazonaws.com/api/self-correct/json', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      content,
+      sourceLang: sourceLanguage,
+      targetLang: targetLanguage,
+      options: { maxRetries }
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(`Self-correcting API error: ${error.error || error.message || response.statusText}`);
+  }
+
+  const result = await response.json();
+  return result;
 }
 
 /**
  * Translate a JSON file (with optional incremental mode)
  */
-async function translateFile(apiKey, sourceFile, targetLanguages, sourceLanguage, incremental = false) {
+async function translateFile(apiKey, sourceFile, targetLanguages, sourceLanguage, incremental = false, selfCorrect = false, maxRetries = 2, skipKeys = [], skipPaths = []) {
   core.info(`📖 Reading source file: ${sourceFile}`);
 
   const sourceContent = await fs.readFile(sourceFile, 'utf8');
@@ -478,6 +592,7 @@ async function translateFile(apiKey, sourceFile, targetLanguages, sourceLanguage
   let contentToTranslate = parsedContent;
   let deletedKeys = [];
   let changedKeyCount = 0;
+  let skippedInfo = { count: 0, keys: [] };
 
   // Incremental mode: only translate changed keys
   if (incremental && outputFormat === 'json') {
@@ -494,7 +609,7 @@ async function translateFile(apiKey, sourceFile, targetLanguages, sourceLanguage
 
         if (keysToTranslate.length === 0 && deletedKeys.length === 0) {
           core.info(`⏭️ No changes detected, skipping translation`);
-          return { translations: {}, deletedKeys: [], isIncremental: true, changedKeyCount: 0 };
+          return { translations: {}, deletedKeys: [], isIncremental: true, changedKeyCount: 0, skippedInfo: { count: 0, keys: [] } };
         }
 
         if (keysToTranslate.length > 0) {
@@ -503,7 +618,7 @@ async function translateFile(apiKey, sourceFile, targetLanguages, sourceLanguage
         } else {
           // Only deletions, no translations needed
           core.info(`📊 Incremental mode: ${changes.deleted.length} key(s) deleted, no translations needed`);
-          return { translations: {}, deletedKeys, isIncremental: true, changedKeyCount: 0 };
+          return { translations: {}, deletedKeys, isIncremental: true, changedKeyCount: 0, skippedInfo: { count: 0, keys: [] } };
         }
       } catch (e) {
         core.warning(`Could not parse previous version, falling back to full translation: ${e.message}`);
@@ -518,13 +633,63 @@ async function translateFile(apiKey, sourceFile, targetLanguages, sourceLanguage
   const keyCount = Object.keys(flattenObject(contentToTranslate)).length;
   core.info(`🌍 Translating ${keyCount} key(s) to: ${targetLanguages.join(', ')}`);
 
-  const translations = await callTranslateAPI(apiKey, contentToTranslate, targetLanguages, sourceLanguage, outputFormat);
+  let translations;
+  let selfCorrectResults = null;
+
+  if (selfCorrect && outputFormat === 'json') {
+    // Self-correcting mode: translate each language with automatic retry
+    core.info(`🔄 Self-correcting mode enabled (max ${maxRetries} retries)`);
+    translations = {};
+    selfCorrectResults = {
+      corrected: 0,
+      needsReview: [],
+      totalCost: 0
+    };
+
+    for (const targetLang of targetLanguages) {
+      core.info(`🤖 Self-correcting translation to ${targetLang}...`);
+      const result = await callSelfCorrectingAPI(apiKey, contentToTranslate, targetLang, sourceLanguage, maxRetries);
+
+      translations[targetLang] = result.content;
+
+      // Track self-correction stats
+      if (result.summary) {
+        selfCorrectResults.corrected += result.summary.corrected || 0;
+        if (result.needsReview && result.needsReview.length > 0) {
+          selfCorrectResults.needsReview.push({
+            language: targetLang,
+            items: result.needsReview
+          });
+        }
+      }
+      if (result.cost) {
+        selfCorrectResults.totalCost += result.cost.totalCost || 0;
+      }
+
+      if (result.summary?.corrected > 0) {
+        core.info(`  ✨ ${result.summary.corrected} translation(s) auto-corrected for ${targetLang}`);
+      }
+      if (result.summary?.needsReview > 0) {
+        core.warning(`  ⚠️ ${result.summary.needsReview} translation(s) need review for ${targetLang}`);
+      }
+    }
+
+    selfCorrectResults.totalCost = Number(selfCorrectResults.totalCost.toFixed(6));
+    core.info(`💰 Self-correction cost: $${selfCorrectResults.totalCost}`);
+  } else {
+    // Standard translation
+    const result = await callTranslateAPI(apiKey, contentToTranslate, targetLanguages, sourceLanguage, outputFormat, skipKeys, skipPaths);
+    translations = result.translations;
+    skippedInfo = result.skippedInfo;
+  }
 
   return {
     translations,
     deletedKeys,
     isIncremental: incremental,
-    changedKeyCount: incremental ? changedKeyCount : keyCount
+    changedKeyCount: incremental ? changedKeyCount : keyCount,
+    selfCorrectResults,
+    skippedInfo
   };
 }
 
@@ -760,6 +925,16 @@ async function run() {
     const incremental = core.getInput('incremental') !== 'false'; // Default true
     const commitMessage = core.getInput('commit-message') || 'chore: update translations [skip ci]';
     const branchName = core.getInput('branch-name') || 'shipi18n-translations';
+    const enableLLMVerification = core.getInput('verify') === 'true';
+    const verifyMode = core.getInput('verify-mode') || 'quick';
+    const enableSelfCorrect = core.getInput('self-correct') === 'true';
+    const maxRetries = Math.min(parseInt(core.getInput('max-retries')) || 2, 5);
+    const skipKeysInput = core.getInput('skip-keys') || '';
+    const skipPathsInput = core.getInput('skip-paths') || '';
+
+    // Parse skip options
+    const skipKeys = skipKeysInput ? skipKeysInput.split(',').map(k => k.trim()).filter(Boolean) : [];
+    const skipPaths = skipPathsInput ? skipPathsInput.split(',').map(p => p.trim()).filter(Boolean) : [];
 
     // Validate inputs
     if (!sourceFile && !sourceDir) {
@@ -794,13 +969,26 @@ async function run() {
     if (incremental) {
       core.info(`⚡ Incremental mode: enabled`);
     }
+    if (enableSelfCorrect) {
+      core.info(`🔄 Self-correcting mode: enabled (max ${maxRetries} retries)`);
+    }
+    if (skipKeys.length > 0 || skipPaths.length > 0) {
+      core.info(`⏭️ Skip keys: ${skipKeys.length > 0 ? skipKeys.join(', ') : 'none'}`);
+      core.info(`⏭️ Skip paths: ${skipPaths.length > 0 ? skipPaths.join(', ') : 'none'}`);
+    }
 
     // Translate all files
     const allFilesChanged = [];
     let totalKeysTranslated = 0;
     let totalKeysDeleted = 0;
+    let totalSkippedKeys = 0;
     const allVerificationIssues = [];
     const sourceContents = {}; // Store source content for verification
+
+    // Self-correction aggregate stats
+    let totalSelfCorrectCorrected = 0;
+    let totalSelfCorrectCost = 0;
+    const allNeedsReview = [];
 
     for (const file of sourceFiles) {
       core.info(`\n${'─'.repeat(50)}`);
@@ -818,7 +1006,13 @@ async function run() {
       }
 
       // Translate the file
-      const result = await translateFile(apiKey, file, targetLanguages, sourceLanguage, incremental);
+      const result = await translateFile(apiKey, file, targetLanguages, sourceLanguage, incremental, enableSelfCorrect, maxRetries, skipKeys, skipPaths);
+
+      // Track skipped keys
+      if (result.skippedInfo && result.skippedInfo.count > 0) {
+        totalSkippedKeys += result.skippedInfo.count;
+        core.info(`⏭️ Skipped ${result.skippedInfo.count} key(s) from translation`);
+      }
 
       // Skip if no changes
       if (result.isIncremental && result.changedKeyCount === 0 && result.deletedKeys.length === 0) {
@@ -827,6 +1021,18 @@ async function run() {
 
       totalKeysTranslated += result.changedKeyCount;
       totalKeysDeleted += result.deletedKeys.length;
+
+      // Track self-correction stats
+      if (result.selfCorrectResults) {
+        totalSelfCorrectCorrected += result.selfCorrectResults.corrected || 0;
+        totalSelfCorrectCost += result.selfCorrectResults.totalCost || 0;
+        if (result.selfCorrectResults.needsReview && result.selfCorrectResults.needsReview.length > 0) {
+          allNeedsReview.push({
+            file: path.basename(file),
+            items: result.selfCorrectResults.needsReview
+          });
+        }
+      }
 
       // Determine output directory
       const effectiveOutputDir = outputDir || (sourceDir ? path.dirname(sourceDir) : path.dirname(file));
@@ -907,8 +1113,109 @@ async function run() {
       }
     }
 
-    // Generate verification summary for PR
-    const verificationSummary = formatVerificationSummary(allVerificationIssues);
+    // LLM-based verification (optional)
+    let llmVerificationResults = { pass: 'skipped', issues: [], cost: { totalCost: 0, totalTokens: 0 } };
+    if (enableLLMVerification && allFilesChanged.length > 0) {
+      core.info(`\n🤖 Running LLM-based verification (Claude Haiku 4.5)...`);
+
+      const llmIssues = [];
+      let allPassed = true;
+      let totalVerificationCost = 0;
+      let totalVerificationTokens = 0;
+
+      for (const translatedFile of allFilesChanged) {
+        try {
+          const translatedContent = await fs.readFile(translatedFile, 'utf8');
+          const ext = path.extname(translatedFile).toLowerCase();
+
+          if (ext === '.json') {
+            const translatedParsed = JSON.parse(translatedContent);
+
+            // Find corresponding source file
+            const filename = path.basename(translatedFile);
+            const srcFile = Object.keys(sourceContents).find(f => path.basename(f) === filename);
+
+            if (srcFile && sourceContents[srcFile]) {
+              // Extract language from path
+              const pathParts = translatedFile.split(path.sep);
+              const langMatch = pathParts.find(p => /^[a-z]{2}(-[A-Z]{2})?$/.test(p));
+              const lang = langMatch || 'unknown';
+
+              // Call LLM verification
+              const result = await callLLMVerification(
+                apiKey,
+                sourceContents[srcFile],
+                translatedParsed,
+                sourceLanguage,
+                lang,
+                verifyMode
+              );
+
+              // Track costs from this verification
+              if (result.cost) {
+                totalVerificationCost += result.cost.totalCost || 0;
+                totalVerificationTokens += result.cost.totalTokens || 0;
+              }
+
+              if (!result.pass && !result.error) {
+                allPassed = false;
+                llmIssues.push({
+                  language: lang,
+                  file: translatedFile,
+                  issues: result.issues
+                });
+              }
+            }
+          }
+        } catch (e) {
+          core.warning(`Could not run LLM verification on ${translatedFile}: ${e.message}`);
+        }
+      }
+
+      llmVerificationResults = {
+        pass: allPassed,
+        issues: llmIssues,
+        cost: {
+          totalCost: Number(totalVerificationCost.toFixed(6)),
+          totalTokens: totalVerificationTokens
+        }
+      };
+
+      // Log cost summary
+      core.info(`💰 LLM verification cost: $${totalVerificationCost.toFixed(6)} (${totalVerificationTokens} tokens)`);
+
+      if (allPassed) {
+        core.info(`✅ LLM verification passed for all languages`);
+      } else {
+        core.warning(`⚠️ LLM verification found issues in ${llmIssues.length} file(s)`);
+        // Add LLM issues to all verification issues for the summary
+        for (const langIssue of llmIssues) {
+          for (const issue of langIssue.issues) {
+            allVerificationIssues.push({
+              type: 'llm_verification',
+              severity: 'warning',
+              lang: langIssue.language,
+              key: issue.key,
+              message: issue.issues?.map(i => i.detail).join(', ') || 'LLM verification failed'
+            });
+          }
+        }
+      }
+    } else if (!enableLLMVerification) {
+      core.info(`ℹ️ LLM verification disabled (set verify: true to enable)`);
+    }
+
+    // Generate verification summary for PR (include LLM cost and self-correction info)
+    const verificationSummary = formatVerificationSummary(
+      allVerificationIssues,
+      enableLLMVerification ? llmVerificationResults.cost : null,
+      enableSelfCorrect ? {
+        enabled: true,
+        corrected: totalSelfCorrectCorrected,
+        needsReview: allNeedsReview.length,
+        cost: totalSelfCorrectCost
+      } : null
+    );
 
     // Set outputs
     core.setOutput('files-changed', allFilesChanged.length);
@@ -916,6 +1223,41 @@ async function run() {
     core.setOutput('languages', targetLanguages.join(','));
     core.setOutput('verification-errors', allVerificationIssues.filter(i => i.severity === 'error').length);
     core.setOutput('verification-warnings', allVerificationIssues.filter(i => i.severity === 'warning').length);
+    core.setOutput('llm-verification-pass', llmVerificationResults.pass);
+    core.setOutput('llm-verification-issues', JSON.stringify(llmVerificationResults.issues));
+    core.setOutput('llm-verification-cost', llmVerificationResults.cost?.totalCost?.toString() || '0');
+    core.setOutput('llm-verification-tokens', llmVerificationResults.cost?.totalTokens?.toString() || '0');
+
+    // Self-correction outputs
+    core.setOutput('self-correct-corrected', totalSelfCorrectCorrected.toString());
+    core.setOutput('self-correct-needs-review', allNeedsReview.length.toString());
+    core.setOutput('self-correct-cost', totalSelfCorrectCost.toFixed(6));
+    core.setOutput('skipped-keys-count', totalSkippedKeys.toString());
+
+    // Log self-correction summary
+    if (enableSelfCorrect) {
+      core.info(`\n🔄 Self-correction summary:`);
+      core.info(`  ✨ Translations auto-corrected: ${totalSelfCorrectCorrected}`);
+      core.info(`  ⚠️ Translations needing review: ${allNeedsReview.length}`);
+      core.info(`  💰 Total cost: $${totalSelfCorrectCost.toFixed(6)}`);
+
+      if (allNeedsReview.length > 0) {
+        core.warning(`\n⚠️ The following translations need human review:`);
+        for (const fileReview of allNeedsReview) {
+          core.warning(`  ${fileReview.file}:`);
+          for (const langReview of fileReview.items) {
+            if (langReview.items) {
+              for (const item of langReview.items.slice(0, 3)) {
+                core.warning(`    - [${langReview.language}] ${item.key}: ${item.issues?.[0]?.detail || 'needs review'}`);
+              }
+              if (langReview.items.length > 3) {
+                core.warning(`    ... and ${langReview.items.length - 3} more`);
+              }
+            }
+          }
+        }
+      }
+    }
 
     // Get GitHub context for sync reporting
     const { context } = github;
@@ -968,6 +1310,11 @@ async function run() {
         key: i.key,
         message: i.message
       })),
+      llmVerification: enableLLMVerification ? {
+        enabled: true,
+        pass: llmVerificationResults.pass,
+        cost: llmVerificationResults.cost
+      } : { enabled: false },
       prUrl: null, // Will be updated after PR creation
       commitSha,
       branch
